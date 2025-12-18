@@ -1,0 +1,280 @@
+This PowerShell script exports detailed information about all issued certificates from a Microsoft Active Directory Certificate Services (ADCS) Certification Authority into a CSV file.
+
+For each issued Request ID, the script:
+
+Retrieves the certificate from the CA using certreq -retrieve.
+
+Decodes the .cer file using .NET (X509Certificate2).
+
+Extracts subject details, key identifiers, EKUs, and SANs.
+
+Writes a single consolidated CSV report.
+
+Features
+Enumerates all issued requests (Disposition = 20) in the CA database.
+
+Exports each issued certificate as a .cer to a temporary working folder.
+
+Extracts, per certificate:
+
+Request ID
+
+Serial number
+
+Thumbprint (SHA‑1)
+
+Validity (NotBefore, NotAfter)
+
+Subject DN components:
+CommonName, Organization, OU, State, City, Country
+
+Full Subject string
+
+SKI (Subject Key Identifier)
+
+AKI (Authority Key Identifier)
+
+EKUs (Enhanced Key Usage), flattened into a single string
+
+SANs (Subject Alternative Names) with:
+
+DNS names
+
+IP addresses
+
+RFC822 names (email)
+
+UPNs
+
+Any other SAN general names exposed by Windows
+
+SANs are normalized into one column per certificate, with multiple values comma‑separated:
+
+Example: Win2025Ins.cryptosec.inc, cryptosec.inc, CRYPTOSEC.​
+
+Requirements
+Operating System
+Tested: Windows Server 2025 with ADCS installed.
+
+Expected to work on:
+
+Windows Server 2016/2019/2022
+Windows 10 / 11
+
+as long as they can reach the CA over RPC and have the tools below.​
+
+Certification Authority
+Microsoft Active Directory Certificate Services issuing CA.
+
+Script machine must be able to reach the CA using a configuration string like:
+Srv1.domain.local\SubCA.​
+
+PowerShell
+Windows PowerShell 5.1 (comes with the OS).​
+
+Permissions
+The account running the script needs:
+
+Permission to query the CA (at least Read / View‑Only on the CA).
+
+Permission to run certutil.exe and certreq.exe.
+
+Permission to write to:
+
+A temporary working directory (default: %TEMP%\ADCS_Export).
+
+The final CSV output path (for example, your Desktop).​
+
+Running as a local administrator on the CA server is the simplest way to satisfy these conditions, but is not strictly required if CA permissions are properly delegated.​
+
+Dependencies
+No external PowerShell modules are required.
+
+The script uses only:
+
+Built‑in command‑line tools
+
+certutil.exe – to query the CA database and list Request IDs with Disposition = 20.​
+
+certreq.exe – to retrieve issued certificates by Request ID as .cer files.​
+
+.NET
+
+System.Security.Cryptography.X509Certificates.X509Certificate2 – loads and inspects exported certificates.
+
+COM
+
+X509Enrollment.CX509ExtensionAlternativeNames – decodes the Subject Alternative Name extension to enumerate all SAN entries in friendly form (DNS, IP, UPN, RFC822, etc.).​
+
+Script execution policy should allow local scripts (RemoteSigned or less restrictive).
+
+What Gets Exported
+The output CSV has one row per certificate and the following columns:
+
+RequestID – CA database Request ID (integer).
+
+FilePath – path of the temporary .cer file used for decoding.
+
+SerialNumber – certificate serial number (hex).
+
+Thumbprint – SHA‑1 fingerprint of the certificate.
+
+NotBefore – certificate validity start (UTC/local depending on system locale).
+
+NotAfter – certificate expiry.
+
+CommonName – CN= from the Subject DN.
+
+Organization – O= from Subject.
+
+OU – OU= from Subject.
+
+State – ST= from Subject.
+
+City – L= from Subject.
+
+Country – C= from Subject.
+
+Subject – full Subject DN string as Windows formats it.
+
+SKI – formatted Subject Key Identifier.
+
+AKI – formatted Authority Key Identifier (usually KeyID=...).
+
+EKUs – Enhanced Key Usage, e.g.:
+Client Authentication (1.3.6.1.5.5.7.3.2), Server Authentication (1.3.6.1.5.5.7.3.1), Smart Card Logon (1.3.6.1.4.1.311.20.2.2), KDC Authentication (1.3.6.1.5.2.3.5).​
+
+SANs – all SANs normalized into a single, comma‑separated string per certificate, for example:
+Win2025Ins.domain.local, domain.local, domain.​
+
+How It Works
+At a high level:
+
+Enumerate issued Request IDs
+
+powershell
+certutil -config "<CAConfig>" -view -restrict "Disposition=20" -out "Request ID" csv
+This returns all records in the CA database with Disposition 20 (Issued). There is no validity filter here: both current and expired issued certificates are included.​
+
+Retrieve each certificate
+
+For every RequestID:
+
+powershell
+certreq -retrieve -config "<CAConfig>" <RequestID> <TempPath>\Req_<RequestID>.cer
+This pulls the issued certificate corresponding to that RequestID and saves it as a .cer file.​
+
+Decode and extract data
+
+The .cer is loaded into X509Certificate2.
+
+The script reads:
+
+Serial, thumbprint, validity, subject.
+
+SKI, AKI, EKUs from their respective extensions.
+
+For SANs, it:
+
+Locates the SAN extension (2.5.29.17).
+
+Uses X509Enrollment.CX509ExtensionAlternativeNames to get each SAN entry along with its type (DNS, IP Address, RFC822 Name, UPN, etc.).
+
+Joins all SANs into a single string.
+
+Normalize SANs
+
+Internally, SANs are first built as strings like:
+
+text
+DNS:host1.example.com|DNS:host2.example.com|UPN:user@example.com
+Then the script:
+
+Splits on |.
+
+Optionally strips any leading type prefixes or colons.
+
+Joins them into a CSV‑friendly string:
+
+text
+host1.example.com, host2.example.com, user@example.com
+Write CSV
+
+All collected rows are exported with Export-Csv to the path you configure.
+
+Usage
+Clone the repository (or copy the .ps1 file) to a machine that meets the requirements.
+
+Adjust configuration in the script:
+
+Inside the script, edit:
+
+powershell
+$CA        = "Srv1.cryptosec.inc\CryptoSecSubCA"    # Your CA config string
+$WorkDir   = "$env:TEMP\ADCS_Export"               # Temp folder for .cer files
+$OutputCsv = "C:\Path\To\IssuedCertificates_Full.csv"
+Open an elevated PowerShell 5.1 session on the CA or a management server that can reach the CA.
+
+Run the script:
+
+powershell
+Set-ExecutionPolicy RemoteSigned -Scope Process -Force
+.\Export-AdcsIssuedCertificates.ps1
+After completion, inspect IssuedCertificates_Full.csv in Excel or your preferred tool.
+
+Filtering Examples
+Exclude expired certificates
+Add this filter inside the main processing loop, after loading $cert:
+
+powershell
+$now = Get-Date
+if ($cert.NotAfter -lt $now) {
+    # Skip expired certs
+    continue
+}
+Only currently valid certificates
+powershell
+$now = Get-Date
+if ($cert.NotBefore -gt $now -or $cert.NotAfter -lt $now) {
+    continue
+}
+Limit to a specific template
+If you want to restrict to a single certificate template (e.g., Machine):
+
+After reading metadata for the cert (or by cross‑referencing with certutil -view), you can skip any rows where the template does not match.
+
+Security Considerations
+The script only reads certificates and metadata; it does not export or touch private keys.
+
+Temporary .cer files do not contain private key material, but you may optionally clean up the working folder at the end:
+
+powershell
+Remove-Item $WorkDir -Recurse -Force
+Ensure access to the generated CSV is limited appropriately; it contains certificate inventory and subject information useful for internal reconnaissance.
+
+Troubleshooting
+0 certificates exported
+
+Verify certutil shows issued certs:
+certutil -config "<CAConfig>" -view -restrict "Disposition=20" csv.
+
+Ensure you are running as an account with permission to view the CA database.
+
+certreq -retrieve fails
+
+Confirm CA config string is correct:
+certutil -config - -ping
+and select the correct CA.​
+
+COM error when decoding SANs
+
+Ensure you are on full Windows (not Server Core without the necessary components).
+
+As a fallback, you can use Format(0) on the SAN extension instead of COM; this still gives SANs as a string.
+
+Disclaimer
+This script is provided as‑is, without warranty. Test in a non‑production environment before running against production CAs, and review the code to ensure it aligns with your organization’s security and compliance requirements.
+
+
+
+
