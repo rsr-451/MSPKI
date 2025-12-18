@@ -50,7 +50,7 @@ Any other SAN general names exposed by Windows
 
 SANs are normalized into one column per certificate, with multiple values comma‑separated:
 
-Example: Win2025Ins.cryptosec.inc, cryptosec.inc, CRYPTOSEC.​
+Example: Win2025Ins.domain.local, domain.local, domain.​
 
 Requirements
 Operating System
